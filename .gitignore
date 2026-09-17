@@ -1,0 +1,26 @@
+# Third-party Nintendo assets: never committed
+/assets/
+
+# Generated sprite copies served by the web app
+/apps/web/public/sprites/
+
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+*.local
+.out/
+
+# Logs
+logs/
+*.log
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.njsproj
+*.sln
+*.sw?

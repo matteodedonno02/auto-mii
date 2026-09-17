@@ -1,0 +1,141 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Light and dark values live in the same declaration via
+ * `light-dark()`; the manual theme switch flips `color-scheme` on <html>, and
+ * without a choice the system preference wins.
+ *
+ * Shape scale (single system, no exceptions):
+ *   rounded-sm 8px (inner chips) · rounded-md 12px (controls) · rounded-lg 16px
+ *   (panels, stage) · rounded-xl 22px (app frame) · rounded-full (pills/toggles)
+ *
+ * Z-index scale: 30 sticky header · 40 status banner · 50 menus and popovers.
+ */
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(#f3f3f1, #101012);
+  --surface: light-dark(#ffffff, #17171a);
+  --surface-2: light-dark(#fafaf9, #1e1e22);
+  --line: light-dark(#e4e3df, #2a2a2f);
+  --line-strong: light-dark(#d5d4cf, #3a3a40);
+  --ink: light-dark(#1a1a1c, #f4f4f2);
+  --muted: light-dark(#6f6f76, #a1a1aa);
+  --accent: light-dark(#0f766e, #2dd4bf);
+  --accent-ink: light-dark(#ffffff, #04211d);
+  --accent-soft: light-dark(color-mix(in oklab, #0f766e 10%, transparent), color-mix(in oklab, #2dd4bf 14%, transparent));
+  --danger: light-dark(#b3301f, #f87171);
+  --danger-soft: light-dark(color-mix(in oklab, #b3301f 10%, transparent), color-mix(in oklab, #f87171 14%, transparent));
+  --shadow-card: light-dark(0 1px 2px rgb(24 24 20 / 0.05), 0 1px 2px rgb(0 0 0 / 0.35));
+  --shadow-pop: light-dark(
+    0 1px 2px rgb(24 24 20 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.4)
+  ), 0 18px 40px -20px light-dark(rgb(24 24 20 / 0.35), rgb(0 0 0 / 0.7));
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: 'Figtree Variable', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-display: 'Baloo 2 Variable', 'Figtree Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    color: var(--ink);
+  }
+
+  button {
+    font: inherit;
+  }
+
+  /* The stage checkerboard marks "transparent" without adding a color. */
+  .stage-checker {
+    background-image: conic-gradient(
+      var(--line) 0deg 90deg,
+      var(--surface-2) 90deg 180deg,
+      var(--line) 180deg 270deg,
+      var(--surface-2) 270deg 360deg
+    );
+    background-size: 24px 24px;
+  }
+
+  .slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+  }
+
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background-color: var(--surface);
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-card);
+    transition: transform 120ms ease-out;
+  }
+
+  .slider:active::-webkit-slider-thumb {
+    transform: scale(1.12);
+  }
+
+  .slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background-color: var(--surface);
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-card);
+  }
+
+  .slider:disabled {
+    opacity: 0.45;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

@@ -5,7 +5,7 @@ Reverse-engineering notes for `sgango.mii`, validated against public documentati
 - **Research date:** 2026-09-17
 - **Primary sample:** `sgango.mii` (74 bytes, in this folder)
 - **Verification sample:** `mii_000.rsd` (76 bytes, Wii Sports CPU Mii "さぶろう" / *Saburo*), downloaded from the MiiDataFiles archive
-- **Tools used:** PowerShell `Format-Hex`, Python 3.12 (via `uv`), `kaitaistruct`, and the mii2studio reference parser
+- **Tools used:** PowerShell `Format-Hex`, Python 3.12 (via `uv`), `kaitaistruct`, the mii2studio reference parser, and jaames/mii-assets `fflExtract.py` (numpy-2 patched, see section 13)
 
 ---
 
@@ -23,6 +23,7 @@ Reverse-engineering notes for `sgango.mii`, validated against public documentati
 10. [Pitfalls discovered during research](#10-pitfalls-discovered-during-research)
 11. [Verification log](#11-verification-log)
 12. [Sources checked](#12-sources-checked)
+13. [Downloadable asset sets](#13-downloadable-asset-sets)
 - [Appendix A — Annotated hex dump of sgango.mii](#appendix-a--annotated-hex-dump-of-sgangomii)
 - [Appendix B — Validated Python decoder](#appendix-b--validated-python-decoder)
 - [Appendix C — Research scripts and how they were run](#appendix-c--research-scripts-and-how-they-were-run)
@@ -360,6 +361,8 @@ Artifacts used during research are listed in Appendix C.
 | Source | What it is | What was checked | Reliability |
 |---|---|---|---|
 | [wiibrew.org/wiki/Mii_data](https://wiibrew.org/wiki/Mii_data) | Community wiki, last edited 2026-04-12 | Full 74-byte `MII_DATA_STRUCT`, field ranges, UTF-16BE note, Mii ID flags/pants logic, CRC16 code | Primary reference. Its field ordering matches real files, but several "unknown" comments show the page is partly WIP |
+| [wiibrew.org/wiki/Libmii/Rendering_Miis](https://wiibrew.org/wiki/Libmii/Rendering_Miis) | WiiBrew page on drawing Miis from RCD data with 2D sprites | Sprite sheet contents/dimensions, tile lookup arrays, color palettes, anchors, layer order; sprite zip mirror verified (section 13.1) | Primary reference for 2D rendering |
+| [github.com/jaames/mii-assets](https://github.com/jaames/mii-assets) | Extractor for Nintendo's Face Library (FFL) resource archives | Downloaded + numpy-2-patched `fflExtract.py`; extracted `AFLResHigh*.dat` into textures/meshes (section 13.2) | High; repo archived but functional after the two patches |
 | [github.com/HEYimHeroic/mii2studio](https://github.com/HEYimHeroic/mii2studio) — `gen1_wii.py` | Wii parser shipped in mii2studio (tooling associated with the Mii Library) | Exact bit widths/order per field; confirmed against both sample files | Authoritative for the common/visible fields |
 | [mii2studio `mii_data_wii.ksy` / `.py`](https://raw.githubusercontent.com/HEYimHeroic/mii2studio/master/mii_data_wii.ksy) | Newer Kaitai Struct description, generated parser | Ran the generated parser on the sample; found it desynchronizes (15-bit head word) | **Do not use** as-is; newer and more documented, but buggy |
 | [github.com/HEYimHeroic/MiiDataFiles](https://github.com/HEYimHeroic/MiiDataFiles) (archived read-only 2025-11-15) | Archive of every downloadable Mii data file in various formats | README's format taxonomy (RCD/RSD/CFSD/FFSD/NFSD/CHARINFO/MNMS), extension notes, tools (My Avatar Editor, RSDmaker); downloaded `mii_000.rsd` for checksum validation | High. Downloaded sample used as ground truth |
@@ -374,6 +377,75 @@ Artifacts used during research are listed in Appendix C.
 | WiiBrew CRC references ([CCITT article](http://www.joegeluso.com/software/articles/ccitt.htm), [CRC snippet](https://pastebin.com/8eTJQjgp)) | Linked from the WiiBrew page | Context for the CRC-16/CCITT variant | Informational |
 
 Search queries used to locate these sources: "mii file format parser python github wiibrew bitfield month day favorite color" and repository API/tree lookups for `HEYimHeroic/mii2studio` and `HEYimHeroic/MiiDataFiles`.
+
+## 13. Downloadable asset sets
+
+The 74-byte RCD stores only indices — no images. The following sets were downloaded, extracted and verified on 2026-09-17; they live under `assets/` (28.8 MB total, currently untracked in git).
+
+| Local path | Size | What it is | Origin | SHA-256 (first 16) |
+|---|---|---|---|---|
+| `assets/renderMii_sprites/` | 1.0 MB | 14 PNG sheets: every 2D face/hair sprite of the Wii Mii renderer — 72 hairs, 48 eyes, 24 eyebrows, 12 noses, 24 mouths, 8 glasses + lenses, beards, mustaches, features, heads, mole | `renderMii_sprites.zip` from libmii (mdbrim), mirrored on the Google Code archive | `46320237A2E8AAFD` |
+| `assets/ffl_archive/asset/model/character/mii/` | 9.1 MB | `AFLResHigh.dat` + `AFLResHigh_2_3.dat` — Nintendo Face Library resource archives (textures + 3D meshes) from the Miitomo CDN | web.archive.org snapshot of the Miitomo download CDN (links in the jaames/mii-assets README) | `5D45A6AB4174CF44` / `4A4BE71D75162C20` |
+| `assets/ffl/AFLResHigh/`, `assets/ffl/AFLResHigh_2_3/` | 9.6 MB | Extracted FFL assets: `textures/*.png` (some are masks/ramps tinted in-shader), `meshes/*.glb` | `assets/tools/ffl_extract/fflExtract.py` | — |
+| `assets/tools/ffl_extract/` | 40 KB | Face Library extractor (jaames/mii-assets) with two numpy-2 compatibility patches | github.com/jaames/mii-assets | — |
+
+### 13.1 2D sprite pack — complete for the Wii format
+
+Verified against the dimensions documented on WiiBrew's *Rendering Miis* page; every index range in section 3.1 maps to a tile set:
+
+| File | Image size | Tiles | Covers |
+|---|---|---|---|
+| `mii_hairs1.png`, `mii_hairs2.png` | 960×840 | 56 × 120×120 each | hair types 0–71; foreground = all of hairs1 + first 16 tiles of hairs2, background = remaining hairs2 tiles |
+| `mii_eyes1.png`, `mii_eyes2.png`, `mii_eyes3.png` | 324×864 | 96 × 54×54 each | eye types 0–47: whites / iris (tinted with `eyecol[]`) / pupil + outline |
+| `mii_eyebrows.png` | 324×324 | 48 × 36×54 | eyebrow types 0–23 (left + mirrored right) |
+| `mii_noses.png` | 300×100 | 12 × 50×50 | nose types 0–11 |
+| `mii_lips.png` | 300×300 | 24 × 60×60 | mouth types 0–23 |
+| `mii_glasses.png` | 720×216 | 11 × 180×72 | glasses types 0–8 + 3 shaded lens overlays |
+| `mii_beards.png` | 960×420 | 24 × 120×140 | beard types 1–3, one row of 8 per face shape |
+| `mii_mustache.png` | 180×60 | 3 × 60×60 | mustache types 1–3 |
+| `mii_features.png` | 960×720 | 48 × 120×120 | facial features 0–11 (some per face shape) |
+| `mii_heads.png` | 480×240 | 8 × 120×120 | face shapes 0–7 |
+| `mii_mole.png` | 12×12 | 1 | mole overlay |
+
+Lookup arrays mapping data values to tile numbers (from WiiBrew; tile order is in-game order, so values are not in display order):
+
+```c
+int hairfg[72]   = {59,42,65,49,40,44,52,47,45,63,51,54,36,37,48,70,61,56,64,43,53,58,50,27,69,41,39,46,66,71,33,11,12,0,35,57,30,14,25,4,1,31,26,24,3,6,62,13,15,7,19,2,17,67,29,20,9,34,18,8,22,60,23,55,21,32,16,28,10,38,5,68};
+int hairbg[72]   = {56,56,56,56,56,56,56,56,56,56,56,56,16,56,56,56,56,56,17,18,56,19,20,56,56,56,21,56,56,56,56,56,56,56,56,56,22,23,56,56,24,25,56,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,56,56,48,49,50,51,52,53,56};
+int eyebrows[24] = {1,3,14,15,11,10,0,6,8,4,13,12,2,19,16,18,22,9,21,5,17,7,20,23};
+int eyes[48]     = {2,6,0,42,1,24,29,36,3,16,45,13,17,26,46,9,8,5,33,14,11,20,44,18,30,21,7,10,34,41,31,32,15,12,19,23,27,28,38,4,22,25,39,43,37,40,35,47};
+int noses[12]    = {5,0,2,3,7,6,4,10,8,9,1,11};
+int lips[24]     = {6,1,14,16,17,5,10,12,7,13,8,19,23,11,22,18,9,15,21,2,20,3,4,0};
+```
+
+Companion color arrays (`haircol`, `eyecol`, `lipcol`, …), per-part anchors, scale/position steps and the 12-layer draw order are listed on the WiiBrew page. Usage example: `hairfg[hair_type]` selects the foreground tile (from `mii_hairs1` if < 56, else `mii_hairs2` tile − 56) and `hairbg[hairfg[hair_type]]` the background tile (56 = blank, draw nothing).
+
+### 13.2 3D Face Library assets (Miitomo generation)
+
+Extraction results (slot tables have fixed capacity; entries with offset 0 are absent from the Miitomo archives):
+
+| Archive | Textures extracted | Meshes extracted | Capacity |
+|---|---|---|---|
+| `AFLResHigh.dat` | 199 | 592 | 317 / 857 |
+| `AFLResHigh_2_3.dat` | 247 | 586 | 365 / 859 |
+| union of both | **247** | **658** | — |
+
+The 2D pack is complete for the Wii format; the FFL sets cover the modern 3D renderer, but some slots ship only on console (Wii U `FFLResHigh.dat`), and mapping a Wii feature index to an FFL resource index is a separate table, not part of the 74-byte format. Each `.glb` is a single mesh, importable into Blender.
+
+Reproduction command (from repo root):
+
+```powershell
+uv run --with numpy --with pillow python assets\tools\ffl_extract\fflExtract.py -i assets\ffl_archive\asset\model\character\mii\AFLResHigh_2_3.dat 365 859 -t assets\ffl\AFLResHigh_2_3\textures -m assets\ffl\AFLResHigh_2_3\meshes
+```
+
+### 13.3 Tool patches applied
+
+`fflExtract.py` predates numpy 2; two fixes were needed and are already applied in `assets/tools/ffl_extract/`:
+
+1. `np.fromstring(bytes, dtype=...)` → `np.frombuffer(...)` in `ffl/FFLiResource.py`, `ffl/FFLiResourceShape.py`, `ffl/FFLiResourceTexture.py` (binary `np.fromstring` was removed in numpy 2.0).
+2. `get_tex_coords()` copies its structured array before writing `coords["v"]` — arrays built from `frombuffer` are read-only.
+
+Note: `assets/` is untracked (28.8 MB of third-party assets); add it to `.gitignore` before committing if the data should stay out of the repo.
 
 ---
 
@@ -572,5 +644,6 @@ All temporary scripts live in `C:\Users\matteo\AppData\Local\Temp\opencode\` (ou
 | `verify_rsd.py` | Checks stored checksum vs computed, prints name | `python verify_rsd.py <file.rsd>` |
 | `run_ref.py` + `mii_data_wii.py` | Runs mii2studio's Kaitai parser for comparison | `uv run --with kaitaistruct python run_ref.py <file>` |
 | `mii_000.rsd` | Real-world verification sample (Wii Sports Saburo) | downloaded from MiiDataFiles |
+| `assets\tools\ffl_extract\fflExtract.py` | Extracts FFL textures + meshes from `AFLResHigh*.dat` (numpy-2 patched) | `uv run --with numpy --with pillow python assets\tools\ffl_extract\fflExtract.py -i <dat> 365 859 -t <texdir> -m <meshdir>` |
 
 Environment notes: Python 3.12.13 (uv-managed); `kaitaistruct` installed on the fly with `uv run --with kaitaistruct` (the base Python is externally managed, so plain `pip install` is blocked).
