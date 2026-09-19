@@ -11,3 +11,16 @@ class ResizeObserverStub {
 if (!('ResizeObserver' in globalThis)) {
   Object.defineProperty(globalThis, 'ResizeObserver', { value: ResizeObserverStub })
 }
+
+// jsdom has no object URL support: the labeler store creates one per photo.
+if (typeof URL.createObjectURL !== 'function') {
+  Object.defineProperty(URL, 'createObjectURL', {
+    value: (blob: Blob) => `blob:test/${blob instanceof File ? blob.name : 'blob'}`,
+    writable: true,
+    configurable: true,
+  })
+}
+
+if (typeof URL.revokeObjectURL !== 'function') {
+  Object.defineProperty(URL, 'revokeObjectURL', { value: () => undefined, writable: true, configurable: true })
+}

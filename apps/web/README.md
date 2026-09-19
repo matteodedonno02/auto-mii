@@ -19,7 +19,8 @@ L'app è statica e funziona offline: nessuna `fetch`, nessun backend.
 | Comando | Effetto |
 |---|---|
 | `pnpm dev` | server di sviluppo |
-| `pnpm build` | `tsc -b` + build statica in `dist/` |
+| `pnpm labeler` | server di sviluppo sulla pagina di labeling (`/labeler.html`) |
+| `pnpm build` | `tsc -b` + build statica in `dist/` (senza labeler) |
 | `pnpm lint` | oxlint |
 | `pnpm typecheck` | TypeScript strict |
 | `pnpm test` | Vitest (jsdom) |
@@ -35,6 +36,7 @@ src/
     editor/    pannello controlli, rail delle sezioni, azioni header
     preview/   anteprima canvas + selettore sfondo
   editor/      config data-driven delle sezioni (sections.ts, types.ts)
+  labeler/     golden set (D0.7): foto, salvataggio .mii, seconda passata
   lib/         store Zustand, persistenza, file I/O, i18n, temi, sprite atlas
   test/        setup Vitest
 ```
@@ -49,6 +51,16 @@ un campo all'editor = aggiungere config in `src/editor/sections.ts`, non JSX.
 thumbnails delle opzioni usano `featureLayers` (stessa logica di tile/tint del
 compositor) e la cache tint condivisa. Le 14 sheet vengono caricate una volta
 sola in `lib/sprites.ts`.
+
+## Labeler (golden set)
+
+`labeler.html` + `src/labeler/` sono la pagina interna di labeling del golden set
+(D0.7): riusa store dell'editor, `sections.ts`, `FieldRenderer` e `MiiPreview`,
+non contiene il modello e non mostra predizioni. I `.mii` si salvano su disco con
+File System Access API (Chromium/Edge) nella cartella scelta — in genere
+`training/gold_pairs/mii/` — con ricaduta sul download; la seconda passata scrive
+`<id>.p2.mii`. La pagina è esclusa dalla build di produzione: `vite.config.ts`
+compila solo `index.html`.
 
 ## Privacy e licenze
 

@@ -4,9 +4,18 @@ Documento di esecuzione dettagliato per lo **Step 2** di `MII_BUILDER_PLAN.md` (
 locale che, data una foto, produce i parametri di un Mii compatibile con `mii-core`.
 
 - **Data:** 2026-09-17
-- **Revisione:** 2 — integrazione del golden set (§5, §9), validazione gold (§7.4), documenti in `docs/`
-- **Riferimenti:** `MII_BUILDER_PLAN.md` §4, `MII_FORMAT_RESEARCH.md`, `packages/mii-core`
-- **Stato del repo:** Step 1 completo (codec, tabelle, renderer 2D, editor). Zero codice AI.
+- **Revisione:** 4 (2026-09-19) — **labeler del golden set (D0.7, parte web) implementato**:
+  `apps/web/labeler.html` + `apps/web/src/labeler/`, pagina Vite separata ed esclusa dalla build di
+  produzione, riuso di store/`FieldRenderer`/`MiiPreview` dell'editor, salvataggio `.mii` su disco
+  (File System Access API, fallback download), seconda passata `.p2.mii`, note di salto esportabili.
+  Restano del D0.7: validator CLI (`gold validate`), 50 coppie e accordo umano-umano
+- **Revisione 3 (2026-09-19):** si parte da **modelli open source esistenti**: prior art `mii2attr`
+  (§2.1), init **ResNet face-pretrained** (§8.1), quantizzazione QDQ statica (§11.1)
+- **Revisione 2:** integrazione del golden set (§5, §9), validazione gold (§7.4), documenti in `docs/`
+- **Riferimenti:** `MII_BUILDER_PLAN.md` §4, `MII_FORMAT_RESEARCH.md`, `packages/mii-core`,
+  ricerca prior art 2026-09-19 (§2.1)
+- **Stato del repo:** Step 1 completo (codec, tabelle, renderer 2D, editor). **Labeler D0.7
+  implementato il 2026-09-19** (`apps/web`, pagina esclusa dalla build di produzione). Zero codice AI.
 - **Decisioni prese (2026-09-17):**
   1. Training su **GPU locale** — NVIDIA RTX 4050 Laptop 6 GB, compute 8.9 (Ada), driver 610.88
   2. Primo traguardo = **dataset + modello v0 in Python** con metriche; browser dopo
@@ -18,6 +27,13 @@ locale che, data una foto, produce i parametri di un Mii compatibile con `mii-co
      con i picker dell'editor: zero duplicazione. Accordo umano-umano misurato su 8 foto. Lo
      pseudo-labeling VLM (§10.3) è declassato a **piano B**.
   6. **Non-obiettivi di questa v0:** renderer 3D, formato CHARINFO/Switch, backend, deploy pubblico.
+  7. **Si parte da modelli open source esistenti (2026-09-19):** (a) come pipeline di riferimento
+     `mzltest/miiak` (mii2attr), che risolve lo stesso problema invertendo il renderer FFL con 34
+     teste — le sue scelte di design si adottano (§2.1); (b) come inizializzazione un backbone
+     **ResNet face-pretrained** (FairFace ResNet-34 di default), **non** ImageNet generico né training
+     da zero (§8.1). ImageNet e random restano solo come baseline di ablation.
+  8. **Quantizzazione int8 statica (QDQ) con calibrazione**, non dinamica (§11.1): è la modalità
+     raccomandata per i CNN e necessaria se in futuro si tornasse a backbone depthwise.
 
 ---
 
@@ -60,6 +76,11 @@ Mii campionato → render 2D → (augmentation) → modello impara l'inversione 
 Il modello quindi impara a invertire un renderer, non a capire le persone. Il domain gap
 render cartoon ↔ foto reale è **il** problema del progetto; augmentation, metrica end-to-end e
 refine loop esistono per ridurlo, non per eliminarlo.
+
+Questo approccio "closed-loop" non è un'ipotesi: il progetto open source **`mzltest/miiak`**
+(mii2attr) lo ha già implementato sullo stesso formato Mii con un renderer autentico (FFL), 34
+teste e un backbone ResNet/ConvNeXt. La strada è validata; ciò che resta originale qui è il
+renderer 2D, il golden set e la valutazione onesta (§2.1).
 
 L'unico riferimento umano disponibile è un piccolo **golden set** di coppie (foto consenziente,
 Mii costruito a mano) (§5). Con 50 coppie non si addestra un modello da zero — si valuta
@@ -117,10 +138,12 @@ flowchart LR
     subgraph Offline["Offline (training-time)"]
         DS["tools/dataset<br/>Node + @napi-rs/canvas<br/>riusa mii-core"]
         AUG["Augmentation<br/>Python dataloader"]
+        CKPT["Checkpoint open source<br/>ResNet face-pretrained (§2.1)"]
         TRAIN["Training<br/>PyTorch + timm<br/>GPU locale 6 GB"]
         GOLD["Golden set<br/>labeler apps/web<br/>foto + Mii manuale"]
         FT["Fine-tune + eval gold<br/>training/mii_ai"]
         DS --> AUG --> TRAIN
+        CKPT -.-> TRAIN
         TRAIN --> FT
         GOLD --> FT
     end
@@ -138,7 +161,38 @@ flowchart LR
     REF -.-> STORE
 ```
 
-Principi (invariati da `MII_BUILDER_PLAN.md` §1):
+### 2.1 Prior art: cosa esiste già (research 2026-09-19)
+
+Nessuna risorsa è riusabile **come pesi** per questo repo (il renderer è diverso), ma tre classi di
+lavoro già fatto cambiano il piano: una pipeline di riferimento, dei **backbone face-pretrained** e
+del tooling di validazione. Regola: si riusano *idee e checkpoint*, non dipendenze non licenziate.
+
+| Risorsa | Cos'è | Licenza | Cosa ne prendiamo |
+|---|---|---|---|
+| `mzltest/miiak` (mii2attr) | Stesso task (render FFL → attributi Mii), 34 teste su backbone timm ConvNeXt-Tiny/ResNet-50; sampler "plausibile" (port del `FFLiDatabaseRandom`), maschera `-100` sulle teste invisibili, niente hflip, scale/posizioni come *nuisance* | Nessuna licenza dichiarata | Solo design (niente copia di codice): sampler plausibile, maschere condizionali, esclusione degli scale, overfit come sanity check. Prova che l'inversione del renderer funziona |
+| FairFace (ResNet-34) | Modello face-pretrained race/gender/age, open source | Pesi **CC BY 4.0** | **Init di default** del backbone (§8.1): proxy di sesso/carnagione/età |
+| VGGFace2 `resnet50_ft`/`senet50_ft` | Face recognition, conversioni PyTorch pubbliche | Dataset VGGFace2 **ritirato nel 2021**: pesi in zona grigia | Ablation di capacity, previa verifica |
+| InsightFace ArcFace R50 (`buffalo_l`), AdaFace iResNet | iResNet standard per il volto (~24M iResNet-18, ~44M iResNet-50) | Codice MIT, **pesi non-commercial** | Solo sperimentazione interna / ablation |
+| `timesler/facenet-pytorch` InceptionResnetV1 | Inception-ResNet VGGFace2, auto-download | Codice MIT, pesi VGGFace2 (grigio) | Alternativa; richiede conversione |
+| timm (`resnet18.a1_in1k`, …) | Pesi ImageNet "ResNet Strikes Back" per ogni variante ResNet | Nota di timm: ImageNet per ricerca | Baseline riproducibile delle ablation |
+| `PretendoNetwork/mii-js`, `HEYimHeroic/MiiDataFiles`, `ariankordi/FFL-Testing` | Codec, archivio Mii reali, renderer FFL | MIT / dati / MIT | Già nel piano (D0.5); FFL per confronti visivi futuri |
+
+Link: `github.com/mzltest/miiak`, `github.com/dchen236/FairFace`, `github.com/cydonia999/VGGFace2-pytorch`,
+`github.com/deepinsight/insightface` (licenza modelli), `github.com/timesler/facenet-pytorch`,
+`github.com/huggingface/pytorch-image-models` (varianti `resnet*_a1_in1k`). Paper di riferimento:
+He et al., *Deep Residual Learning* (2016); Wightman et al., *ResNet Strikes Back* (2021).
+
+### 2.2 Strategia di avvio
+
+1. **D0 e D0.7 restano come sono**, con due debiti presi dal prior art: sampler *plausibile*
+   (§4.5–4.6) e maschere condizionali (§6.2).
+2. **`backbones.py` in D1**: scarica/converte il checkpoint open source (FairFace ResNet-34 di
+   default, §8.1) e lo carica nel multi-head. L'overfit di D1 va eseguito con l'init reale.
+3. **Ablation di init in D3**: stesso dataset e stessi iperparametri, si cambia solo l'inizializzazione
+   (face vs ImageNet vs random): serve a **misurare** il valore dell'init, non a scegliere se usarla.
+4. Il resto del piano è invariato: il valore del progetto resta in dataset, gold set e valutazione.
+
+### 2.3 Principi (invariati da `MII_BUILDER_PLAN.md` §1)
 
 - **Single source of truth:** il rendering avviene solo via `mii-core`; il dataset generator lo
   riusa in Node, nessuna seconda implementazione. Vale anche per il decode dei `.mii` del golden
@@ -175,7 +229,7 @@ Principi (invariati da `MII_BUILDER_PLAN.md` §1):
    ```powershell
    uv venv training/.venv --python 3.12
    uv pip install --python training/.venv torch torchvision --index-url https://download.pytorch.org/whl/cu124
-   uv pip install --python training/.venv timm albumentations onnx onnxruntime-gpu tensorboard pyyaml rich numpy pillow
+uv pip install --python training/.venv timm albumentations onnx onnxruntime-gpu tensorboard pyyaml rich numpy pillow gdown
    ```
 3. **AMP:** su Ada usare **bf16** (`torch.autocast('cuda', dtype=torch.bfloat16)`) — più stabile
    di fp16 e senza loss scaling.
@@ -186,10 +240,10 @@ Principi (invariati da `MII_BUILDER_PLAN.md` §1):
 
 | Risorsa | Valore | Conseguenza |
 |---|---|---|
-| VRAM | 6 GB | Backbone ≤ ~10M parametri a 224px, batch 96–128 con bf16; niente batch giganti né ViT grandi |
-| Modello scelto | MobileNetV3-Large (~5.5M) | Ampiamente dentro il budget, export int8 ≈ 5–6 MB |
+| VRAM | 6 GB | ResNet-18/34/50 a 224px: batch 128 (R18) / 64 (R34–R50) con bf16; niente ViT grandi |
+| Modello scelto | **ResNet face-pretrained** (target export: R18; init: FairFace R34, §8.1) | ResNet quantizza bene (int8 R18 ≈ 12 MB); si parte da checkpoint open source, mai da zero |
 | Disco dataset | 100k PNG 256×256 RGBA ≈ 4–9 GB | Accettabile; shard da 5k per non avere directory enormi |
-| Tempo | ~1.5–3 h per 100k × 15 epoche | Iterazioni v0 su 10k = ~10–20 min |
+| Tempo | ~2–4 h per 100k × 20 epoche (R18) | Iterazioni v0 su 10k = ~30–60 min |
 
 ---
 
@@ -292,6 +346,10 @@ Avatar Editor) in `packages/mii-core/src/tables/validity.ts`, usarle in `randomi
 mascherarle nel training (Appendice B). Va fatto **prima di scalare a 100k**, non prima della
 prima run su 10k.
 
+Per il sampler *plausibile* valgono anche le **correlazioni** osservate in mii2attr (es. colore
+sopracciglia = colore capelli): vanno estratte dai dati reali di §4.5 e applicate nel sampler, non
+inventate a mano.
+
 ### 4.7 Contact sheet
 
 Comando `pnpm --filter dataset sheet --dir .out/dataset --limit 200` che produce
@@ -373,6 +431,23 @@ training/gold_pairs/
   offline per vincolo.
 - **Enforcement del protocollo:** la pagina non contiene il modello e non mostra mai predizioni.
 
+**Stato (2026-09-19): implementato.** Moduli in `apps/web/src/labeler/`:
+
+| File | Ruolo |
+|---|---|
+| `labeler.html` + `main.tsx` | entry Vite separata; `pnpm --filter web labeler` |
+| `types.ts` / `naming.ts` | foto, stati, passate; id da basename, `<id>.mii` / `<id>.p2.mii` |
+| `fsa.ts` | File System Access: apri cartella foto (read), cartella `.mii` (readwrite), lettura `.mii` esistenti |
+| `storage.ts` | bozze e stati in `localStorage` (`mii-builder.labeler`), sempre via codec |
+| `store.ts` | Zustand: coda foto, bozza per passata, salvataggio, salto con motivo, note salti |
+| `PhotoStage.tsx` | drag&drop, zoom/pan (tasto doppio = adatta), file picker |
+| `LabelerToolbar/Footer/SkipDialog/Notice` | progresso, passata, salvataggio, salto motivato |
+| `useLabelerHotkeys.ts` | `Ctrl+S` salva · `Ctrl+←/→` naviga · `Ctrl+↓` salta |
+
+Test: `naming.test.ts`, `store.test.ts`, `PhotoStage.test.tsx`. Esclusione di produzione verificata:
+`vite.config.ts` dichiara il solo input `index.html` e `pnpm --filter web build` non emette la
+pagina in `dist/`.
+
 ### 5.3 Validator CLI (`pnpm --filter dataset gold validate`)
 
 - Rilegge i `.mii` con `decodeMii` di mii-core (**mai** una seconda implementazione del codec),
@@ -413,6 +488,10 @@ training/gold_pairs/
 3. La build di produzione di `apps/web` **non** contiene la pagina labeler (verifica su `dist/`).
 4. README con protocollo e consenso; nessuna foto né `.mii` in git.
 
+**Stato (2026-09-19):** punti 1 e 3 soddisfatti dal labeler web (salvataggio diretto in
+`training/gold_pairs/mii/` o download; `dist/` verificato senza la pagina). Punti 2 e 4 aperti:
+dipendono dal validator CLI e dalle 50 coppie.
+
 **Stima:** labeler 1–1.5 g · validator 0.5 g · 50 Mii × ~10 min ≈ 9–10 h umane (parallele al codice).
 
 ---
@@ -437,6 +516,7 @@ training/
 │  ├─ targets.py          campi → teste, classi, range, maschere, encode/decode
 │  ├─ data.py             Dataset PyTorch: png + params.jsonl + augmentation
 │  ├─ augment.py          pipeline albumentations (sfondo, jitter, blur, JPEG, geometrie)
+│  ├─ backbones.py        download/conversione checkpoint open source → backbone timm
 │  ├─ model.py            timm backbone + multi-head
 │  ├─ loss.py             CE pesata + SmoothL1
 │  ├─ metrics.py          top-1/top-3, baseline marginale, exact-match
@@ -467,6 +547,10 @@ Regole di encoding:
   comunque; in v0.1 si può mascherare per tipo.
 - **Maschere per sesso:** quando `validity.ts` esiste (D0.6), la loss ignora i logit non validi
   e l'inferenza li azzera prima del decode. Configurabile da `configs/v0.yaml`.
+- **Maschere condizionali (dal prior art, §2.1):** le teste subordinate a un campo "assente" o non
+  applicabile ricevono label `-100` e non contribuiscono alla loss: `glasses.color`/`glasses.y` se
+  `glasses.type = 0`, `facialHair.*` se mustache e beard sono 0, `mole.*` se `mole.enabled = 0`,
+  `hair.flip` per i tipi senza flip. Il modello non deve indovinare ciò che il renderer non disegna.
 
 ### 6.3 `data.py`
 
@@ -483,15 +567,18 @@ Regole di encoding:
 
 ```python
 class MiiNet(nn.Module):
-    def __init__(self, backbone: str = "mobilenetv3_large_100", pretrained: bool = True):
-        # features = timm.create_model(backbone, pretrained=pretrained, num_classes=0)
+    def __init__(self, backbone: str = "resnet34", pretrained: str | None = "face"):
+        # features = backbones.load(backbone, pretrained)   # "face" | "imagenet" | None (§8.1)
         # testa condivisa: Linear(feat_dim, 512) + GELU + Dropout(0.1)
         # una testa lineare per ogni campo (classificazione) e per ogni geometria (regressione)
     def forward(self, x) -> dict[str, Tensor]: ...
 ```
 
-- Backbone scambiabile da config (`mobilenetv3_large_100`, `tf_efficientnet_lite0`,
-  `resnet18`) per l'ablation veloce.
+- Backbone scambiabile da config (`resnet34` init face, `resnet18` target export, `resnet50`/iResNet
+  per l'ablation, `mobilenetv3_large_100` come fallback) per l'ablation veloce.
+- `backbones.py` mappa ogni checkpoint open source sui nomi dei layer timm/torchvision (FairFace:
+  `resnet34` con `fc` a 18 uscite da scartare; VGGFace2/ArcFace/AdaFace: conversione iResNet) e
+  registra nel report l'origine esatta dei pesi (URL + SHA-256).
 - Il model ritorna un dizionario `nome_campo → logits/valore`, così loss, metriche ed export
   sono generici: aggiungere un campo = una riga di config + una voce in `targets.py`.
 - **Nessun** `AdaptiveAvgPool` custom: si usano le feature di timm (`num_classes=0`).
@@ -518,6 +605,8 @@ class MiiNet(nn.Module):
 2. `python -m mii_ai.train --config configs/v0.yaml --smoke` esegue 50 step su 1k campioni
    senza errori e scrive un checkpoint.
 3. Nessun `TODO` nei file di `mii_ai/` relativi a encoding target.
+4. `mii_ai.backbones` scarica/converte il checkpoint di default e l'overfit è stato eseguito con
+   l'init face-pretrained (non random).
 
 ---
 
@@ -590,14 +679,33 @@ La metrica di prodotto: **quanto il modello si avvicina alle scelte di un umano*
 
 ## 8. D3 — Training v0
 
-### 8.1 Backbone e motivazione
+### 8.1 Backbone, checkpoint di partenza e motivazione
 
-| Candidato | Param | Note |
-|---|---|---|
-| **MobileNetV3-Large 100** (scelto) | ~5.5M | Miglior compromesso accuratezza/latenza/export int8 su WebGPU; 6 GB bastano |
-| EfficientNet-Lite0 | ~4.7M | Alternativa, leggermente più lento in training |
-| ResNet18 | ~11M | Solo come riferimento di ablation |
-| ViT-tiny / DINOv2-small fine-tuned | 5–22M | Solo se il gap semantico rende il CNN insufficiente; più costoso e più fragile su 6 GB |
+**Non si addestra da zero e non si parte da pesi ImageNet generici: si parte da un modello open
+source face-pretrained** (§2.1). La ricerca sul ResNet motiva la scelta:
+
+- Le feature di un backbone **pretrained sul volto** (identità, attributi) sono molto più vicine al
+  dominio di un ritratto reale di quelle ImageNet: convergenza più rapida e miglior transfer sul
+  dominio reale (D4) e sul gold set (§9).
+- ResNet/iResNet sono l'architettura standard dei modelli del volto (ArcFace, AdaFace, FairFace):
+  i pesi esistono, sono scaricabili e l'adattamento è documentato.
+- **Quantizzazione:** i CNN depthwise (MobileNet) degradano male in int8 per via dei pesi minuscoli;
+  ResNet quantizza con perdite minime (ONNX Model Zoo: R50 int8 = 24.6 MB, −0.2% top-1).
+- **WebGPU:** convoluzioni standard, nessun operatore esotico; ResNet-18 resta sotto il target di
+  latenza del browser.
+
+| Ruolo | Candidato | Param | Note |
+|---|---|---|---|
+| **Init di default** | **FairFace ResNet-34 face-pretrained** | ~21.8M | Licenza CC BY 4.0; teste race/gender/age = proxy di carnagione/sesso/età |
+| **Target export** | ResNet-18 (init face se disponibile, altrimenti `resnet18.a1_in1k`) | ~11.7M | Int8 ≈ 12 MB; se il gap vs R34 è contenuto è il modello da spedire |
+| Capacity ablation | VGGFace2 `resnet50_ft`/SE-R50, iResNet-18/50 (ArcFace/AdaFace) | ~24–44M | Prestazioni superiori in riconoscimento; licenza da verificare (§2.1) |
+| Controllo | ResNet-18 ImageNet (`a1_in1k`) | ~11.7M | Baseline riproducibile per misurare il delta dell'init face |
+| Fallback CPU/WASM | MobileNetV3-Large 100 | ~5.5M | Solo se il vincolo di latenza/quantizzazione lo richiede; in tal caso cercare prima un MobileFaceNet face-pretrained |
+| Riferimento prior art | ConvNeXt-Tiny | ~28M | Scelta GPU di mii2attr: utile come termine di confronto esterno |
+
+Regola pratica: **una variabile per volta** in D3. Stesso dataset e stessi iperparametri, si cambia
+solo l'init (face vs ImageNet vs random) e poi la taglia (R18 vs R34/R50). Il vantaggio atteso
+dell'init face è maggiore su gold/foto reali che sui render 2D: è l'ablation a dirlo, non l'intuito.
 
 ### 8.2 Config `configs/v0.yaml` (valori di partenza)
 
@@ -606,11 +714,12 @@ seed: 42
 data:
   root: tools/dataset/.out/dataset
   image_size: 224
-  batch_size: 96          # alzare a 128 se la VRAM regge
+  batch_size: 128         # ResNet-18; usare 64 per R34/R50 (da tarare su 6 GB)
   num_workers: 6
 model:
-  backbone: mobilenetv3_large_100
-  pretrained: true
+  backbone: resnet34      # init di default (§8.1); target export: resnet18
+  pretrained: face        # face | imagenet | none
+  checkpoint: null        # path esplicito a un .pth convertito (overrides pretrained)
   dropout: 0.1
 train:
   epochs: 20
@@ -622,6 +731,7 @@ train:
   grad_clip: 1.0
   ema: true                # media esponenziale dei pesi (facile e aiuta)
 augment:
+  hflip: false            # mai: rompe hair.flip, mole.x e i campi lato-specifici
   background: [solid, gradient]   # foto reali: abilitate in D4
   color_jitter: 0.3
   blur_p: 0.2
@@ -644,6 +754,8 @@ Ordine applicato: sfondo → jitter colore/luminosità → blur/rumore → JPEG 
 - **Geometrie:** rotazione ±10°, scala 0.9–1.1, leggera prospettiva. **Mai** occlusione delle
   feature (niente Cutout sugli occhi/capelli): mascherare una feature e chiedere di predirla è
   gossip learning, non augmentation utile.
+- **Mai flip orizzontale** (né in training né in eval): i campi sono lato-specifici (`hair.flip`,
+  `mole.x/y`, posizioni/rotazioni); un flip crea etichette false. Lezione diretta da mii2attr (§2.1).
 - Ogni transform che sposta il volto deve mantenere il crop: il render è già centrato.
 
 ### 8.4 Scala e iterazione
@@ -651,8 +763,8 @@ Ordine applicato: sfondo → jitter colore/luminosità → blur/rumore → JPEG 
 | Fase | Dati | Scopo | Tempo |
 |---|---|---|---|
 | Smoke | 1k | Verifica pipeline, loss che scende | minuti |
-| v0a | 10k | Prima valutazione seria, tuning augmentation | ~15–30 min/run |
-| v0b | 100k | Run finale v0 | ~2–3 h/run |
+| v0a | 10k | Prima valutazione seria, tuning augmentation | ~30–60 min/run |
+| v0b | 100k | Run finale v0 | ~2–4 h/run |
 
 Si scala a 100k **solo** se su 10k il modello batte la baseline marginale sulle teste attese
 (§1.4) e la curva non è satura. Se su 10k non batte la baseline, il problema è dati/augmentation
@@ -685,7 +797,8 @@ qualsiasi altra strategia (§10.3).
 
 ### 9.1 Varianti da confrontare
 
-Tutte economiche su 6 GB e poche decine di esempi:
+Tutte economiche su 6 GB e poche decine di esempi. Con l'init face-pretrained (§8.1) il fine-tune
+parte avvantaggiato: la variante head-only è la prima da provare.
 
 1. **Head-only:** backbone congelato, si addestrano solo teste e testa condivisa; LR 1e-4–1e-3.
    È la variante più sicura.
@@ -759,7 +872,9 @@ Il giudizio umano su questi fogli ("assomiglia?") è la metrica finale di prodot
    Mii; si usano come dati extra pesati ~0.2 per fine-tuning / distillazione. È l'ultimo modo
    per iniettare "senso umano" nei dati quando il gold non basta. **Privacy:** opt-in esplicito,
    nessuna foto caricata senza consenso, nessuna persistenza remota.
-4. **Refine loop (D6):** si anticipa se il delta di similarità è già misurabile.
+4. **Distillazione taglia grande → taglia export** (es. FairFace R34 → R18) se il gap di accuratezza
+   tra init face e target browser è reale: soft-label del modello grande, nessun dato nuovo, poche ore.
+5. **Refine loop (D6):** si anticipa se il delta di similarità è già misurabile.
 
 La decisione si prende con i numeri in mano, non prima.
 
@@ -778,12 +893,19 @@ La decisione si prende con i numeri in mano, non prima.
 
 - `torch.onnx.export` con **opset 17** (compatibilità onnxruntime-web), batch dinamico.
 - Uscite con nomi stabili: `head__<campo>` (logits/valori); niente output anonimi posizionali.
-- Quantizzazione **int8 dinamica** (`onnxruntime.quantization.quantize_dynamic`) come artefatto
-  principale; fp16 come alternativa se l'int8 degrada troppo le teste piccole.
-- **Verifica obbligatoria:** per 200 campioni, confronto `argmax` ONNX vs PyTorch e scarto medio
-  sulle regressioni; soglia documentata nel report.
-- Target: **< 20 MB** (atteso ~5–6 MB int8), preprocessing (resize/normalize) fuori dal grafo
-  per non appesantire il modello.
+- Quantizzazione **int8 statica QDQ con calibrazione** (`quantize_static`, 500 render di val come
+  calibration set, `per_channel=True`, `optimize_model=False`): è la modalità raccomandata per i CNN.
+  La **dinamica è esclusa**: pensata per RNN/transformer e storicamente rovinosa sulle architetture
+  depthwise (lezione che resta valida per il fallback MobileNetV3).
+- **Nodi esclusi** (`nodes_to_exclude`) se il debugger QDQ mostra cadute: primo conv, ultimo layer e
+  le teste piccole (`glasses.*`, `facialHair.*`, `mole.*`) possono restare fp32 — costo trascurabile.
+- **Verifica obbligatoria:** per 200 campioni, confronto `argmax` ONNX vs PyTorch **per testa** e
+  scarto medio sulle regressioni; nodi esclusi e soglie documentati nel report.
+- Target: **< 15 MB int8** per ResNet-18 (atteso ~12 MB; riferimento: R50 int8 = 24.6 MB, −0.2%
+  top-1). Se si spedisce R34/R50 il target sale a ~25 MB e va giustificato (lazy load).
+- `apps/web` può tenere **due artefatti dallo stesso export**: int8 QDQ (~12 MB) per il fallback WASM
+  e fp16 (~24 MB) per WebGPU, se il test di parità mostra problemi di supporto degli EP (decisione A10).
+- Preprocessing (resize/normalize) fuori dal grafo per non appesantire il modello.
 
 ### 11.2 Integrazione browser
 
@@ -798,7 +920,7 @@ apps/web/src/ai/
 ```
 
 - `apps/web/public/models/` aggiunto al `.gitignore`; il modello si scarica **solo** quando
-  l'utente preme "Crea da foto" (lazy load).
+  l'utente preme "Crea da foto" (lazy load). Artefatto di default: `mii-v0-int8.onnx` (~12 MB).
 - Inferenza: `webgpu` EP, fallback `wasm` con SIMD; obiettivo < ~2 s su WebGPU.
 - **Face crop v0:** crop centrale con margine regolabile dall'utente (niente dipendenze extra);
   v0.1: MediaPipe Face Detector (~2 MB WASM) per il crop automatico.
@@ -816,6 +938,7 @@ apps/web/src/ai/
 2. L'app precompila l'editor da una foto in < ~2 s su WebGPU e < ~8 s su WASM (documentato).
 3. `pnpm lint && pnpm typecheck && pnpm test` verdi; build statica invariata nel peso (modello
    fuori dal bundle JS).
+4. Artefatto int8 < 15 MB (ResNet-18) con parità documentata **per testa** e nodi esclusi elencati.
 
 ---
 
@@ -843,15 +966,15 @@ Documentato qui per non perderne il design; **non fa parte della v0**.
 | **D0** | Dataset | `tools/dataset` + 10k campioni | §4.10 | 1–1.5 g |
 | **D0.5** | Sampler realistico | modalità `--sampler real` | Istogrammi da MiiDataFiles, manifest aggiornato | 0.5–1 g |
 | **D0.6** | Vincoli per sesso | `validity.ts` + uso in sampler e training | Liste trascritte, test dedicati, maschere attive | 0.5 g |
-| **D0.7** | Golden set | labeler + validator + 50 coppie + accordo | §5.7 | 1.5–2 g + 9–10 h umane (parallele) |
-| **D1** | Pipeline training | `training/` + overfit 20 | §6.7 | 0.5–1 g |
+| **D0.7** | Golden set | labeler ✅ (2026-09-19) + validator + 50 coppie + accordo | §5.7 (1, 3 fatti; 2, 4 aperti) | 0.5–1 g (validator) + 9–10 h umane |
+| **D1** | Pipeline training | `training/` + `backbones.py` + overfit 20 | §6.7 | 0.75–1.25 g |
 | **D2** | Eval harness | baseline + metriche + embedding + gold | §7.5 | 0.75–1.25 g |
-| **D3** | Modello v0 | checkpoint + report | §8.6 | 2–3 g |
+| **D3** | Modello v0 | checkpoint + report + ablation init | §8.6 | 2–4 g |
 | **D3.5** | Fine-tune gold | checkpoint adattato o rifiuto motivato | §9.5 | 0.5–1 g |
 | **D4** | Foto reali | contact sheet + numeri + decisione gap | §10.4 | 1–2 g |
 | **D5** | On-device | ONNX + `LocalOnnxPredictor` + UI | §11.3 | 2–3 g |
 
-Totale indicativo part-time: **10–16 giorni** fino alla v0 nell'app (il labeling umano di D0.7
+Totale indicativo part-time: **11–17 giorni** fino alla v0 nell'app (il labeling umano di D0.7
 corre in parallelo al codice). D0.5/D0.6 sono paralleli e non bloccano la prima run su 10k.
 
 Ordine di commit consigliato: **D0 → D0.7 (il labeling parte appena il labeler è pronto) → D1 →
@@ -871,11 +994,14 @@ D2 → D3 (10k) → D3 (100k) → D3.5 → D4 → D5**.
 | Labeler nella build di produzione | Superficie inutile in prod | Voce dedicata nella DoD D0.7 (verifica su `dist/`) |
 | Ambiguità semantica dei tipi (naso/bocca/occhi) | Teste sotto baseline | Declassate a v0.1; il valore sta nei tratti salienti |
 | Vincoli per sesso assenti | Campioni non validi, spreco di capacità | D0.6 prima dei 100k |
-| 6 GB VRAM | OOM o batch minuscoli | MobileNetV3 + bf16 + batch 96; ablation backbone da config |
+| 6 GB VRAM | OOM o batch minuscoli | ResNet-18/34 + bf16 + batch 128/64; bilancio misurato prima delle run lunghe |
 | Overfitting sui render | Generalizzazione scarsa | Split per Mii, augmentation, early stopping, EMA |
 | `params.jsonl` disallineato dai PNG | Metriche false | Test di determinismo + golden hash + controllo manifest |
 | Foto reali (privacy) | Danno legale/etico | Solo locali, gitignored, consenso, nessun upload; VLM in opt-in |
-| Modello grande per il web | Latenza/UX | Target < 20 MB int8, lazy load, worker, fallback WASM |
+| Modello grande per il web | Latenza/UX | Target < 15 MB int8 (R18), lazy load, worker, fallback WASM; MobileNetV3 piano B |
+| Init face-pretrained lontano dal render 2D | Il vantaggio dell'init svanisce nel fine-tuning | L'ablation D3 misura il delta: se nullo si usa ImageNet/random, il valore resta nel dataset sintetico |
+| Licenza dei pesi di partenza | Rischio legale se l'app viene distribuita | Matrice licenze §2.1: default FairFace CC BY 4.0; ArcFace/VGGFace2 solo ricerca interna; verifica prima del rilascio |
+| int8 degrada le teste piccole | Predizioni peggiori sul web | QDQ statica + per-channel + nodi esclusi fp32 + parità per testa (D5) |
 
 ---
 
@@ -891,6 +1017,8 @@ D2 → D3 (10k) → D3 (100k) → D3.5 → D4 → D5**.
 | A6 | Foto/sfondi reali nel training base | Mai / Solo sfondi / Sfondi + foto con consenso | Mai nel training di base: il gold serve a fine-tune e valutazione; sfondi fotografici in D4 |
 | A7 | ~~Golden set~~ *(chiusa 2026-09-17)* | Dimensione, split, accordo | 50 coppie, 40/10, accordo su 8 foto (§5) |
 | A8 | ~~Labeler~~ *(chiusa 2026-09-17)* | Dove vive l'app di labeling | Pagina separata in `apps/web`, esclusa dalla build di produzione (§5.2) |
+| A9 | Checkpoint di partenza | FairFace R34 / VGGFace2 R50 / ArcFace R50 / iResNet / ImageNet R18 | **FairFace ResNet-34** (CC BY 4.0, §2.1); ablation con gli altri in D3 previa verifica licenza |
+| A10 | Artefatto browser | Solo int8 QDQ / int8 + fp16 | int8 QDQ di default; fp16 per WebGPU solo se il test di parità degli EP lo richiede (§11.1) |
 
 ---
 
@@ -943,6 +1071,11 @@ Una riga JSON per campione (formato allineato a `MII_BUILDER_PLAN.md` Appendice 
 | `nose.type` | 12 | v0.1 |
 | `mouth.type` | 24 | v0.1 |
 
+Nota (prior art §2.1): le **teste subordinate** ricevono label `-100` quando il campo padre è
+assente — `glasses.color`/`glasses.y` se `glasses.type = 0`, `facialHair.color`/`facialHair.y` se
+mustache e beard sono entrambi 0, `mole.*` se `mole.enabled = 0`. Escludere dalla loss ≠ rimuovere:
+il campo resta predetto, viene ignorato solo dove il renderer non lo disegna.
+
 ### B.2 Regressione (normalizzate in `[0,1]`)
 
 | Campo | Range effettivo |
@@ -955,6 +1088,10 @@ Una riga JSON per campione (formato allineato a `MII_BUILDER_PLAN.md` Appendice 
 | `facialHair.y` | 0–16 |
 | `mole.x` | 0–16 |
 | `mole.y` | 0–30 |
+
+Nota (prior art §2.1): in mii2attr le **scale** sono *nuisance* — randomizzate in training ma non
+predette. Qui restano regressioni opzionali (A1): se sul val sono sotto baseline si escludono senza
+rimpianti, come già previsto per `nose.type`/`mouth.type`.
 
 ### B.3 Esclusi
 
@@ -980,6 +1117,7 @@ pnpm --filter web labeler
 pnpm --filter dataset gold validate        # verifica coppie, scrive pairs.jsonl + agreement.json
 
 # Training (Python, dalla cartella training/ con venv attivo)
+python -m mii_ai.backbones fetch --source fairface --out runs/init/resnet34_fairface.pth
 python -m mii_ai.overfit --config configs/v0.yaml --count 20
 python -m mii_ai.train --config configs/v0.yaml --smoke
 python -m mii_ai.train --config configs/v0.yaml --data tools/dataset/.out/dataset
@@ -987,7 +1125,7 @@ python -m mii_ai.eval --config configs/v0.yaml --checkpoint runs/v0/best.pt
 python -m mii_ai.eval --config configs/v0.yaml --checkpoint runs/v0/best.pt --gold
 python -m mii_ai.eval --photos training/gold_pairs/photos
 python -m mii_ai.finetune --config configs/v0.yaml --checkpoint runs/v0/best.pt --variant head-only
-python -m mii_ai.export_onnx --checkpoint runs/v0/best.pt --out ../apps/web/public/models/mii-v0.onnx
+python -m mii_ai.export_onnx --checkpoint runs/v0/best.pt --calib tools/dataset/.out/dataset --out ../apps/web/public/models/mii-v0-int8.onnx
 ```
 
 ## Appendice D — Definition of Done v0
@@ -998,7 +1136,7 @@ python -m mii_ai.export_onnx --checkpoint runs/v0/best.pt --out ../apps/web/publ
 3. Valutazione gold (§7.4) riportata per il checkpoint v0 e per l'eventuale checkpoint
    fine-tunato, con errori assoluti e confronto con l'accordo umano.
 4. Valutazione su ≥ 20 foto reali documentata con contact sheet e numeri.
-5. ONNX int8 < 20 MB verificato contro PyTorch, caricato lazy nell'app.
+5. ONNX int8 < 15 MB (ResNet-18) verificato contro PyTorch per testa, caricato lazy nell'app.
 6. "Crea da foto" precompila l'editor; nessuna foto lascia il dispositivo.
 7. README di `tools/dataset`, `training/` e `training/gold_pairs/` aggiornati con i comandi
    reali.

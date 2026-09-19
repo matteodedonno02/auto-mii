@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <meta
+      name="description"
+      content="Pagina interna di labeling del golden set: costruisci a mano il Mii di una foto. Esclusa dalla build di produzione."
+    />
+    <meta name="theme-color" content="#F3F3F1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#101012" media="(prefers-color-scheme: dark)" />
+    <title>Mii Builder — Labeling</title>
+    <script>
+      try {
+        var stored = localStorage.getItem('mii-builder.theme')
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.dataset.theme = stored
+        }
+      } catch (error) {
+        /* storage unavailable: follow the system theme */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/labeler/main.tsx"></script>
+  </body>
+</html>
